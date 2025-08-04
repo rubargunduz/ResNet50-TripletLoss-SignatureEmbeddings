@@ -1,4 +1,5 @@
-*.h5
-*.txt
+models
+triplets.txt
+val_triplets.txt
 __pycache__
 dataset

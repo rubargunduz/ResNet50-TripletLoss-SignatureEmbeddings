@@ -1,0 +1,239 @@
+import os
+import random
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support, roc_auc_score, roc_curve
+import matplotlib.pyplot as plt
+from tensorflow.keras.models import load_model
+from preprocessing import preprocess_signature
+
+class SignatureAccuracyTester:
+    def __init__(self, model_path, threshold):
+        self.model = load_model(model_path)
+        self.threshold = threshold
+        
+    def get_embedding(self, image_path):
+        """Get embedding for a single image"""
+        img = preprocess_signature(image_path)
+        img = np.expand_dims(img, axis=0)
+        embedding = self.model.predict(img, verbose=0)[0]
+        return embedding
+    
+    def create_test_pairs(self, test_dir, num_genuine=500, num_forged=500):
+        """Create genuine and forged pairs for testing"""
+        people = [p for p in os.listdir(test_dir) if os.path.isdir(os.path.join(test_dir, p))]
+        
+        genuine_pairs = []
+        forged_pairs = []
+        
+        # Generate genuine pairs (same person)
+        for _ in range(num_genuine):
+            person = random.choice(people)
+            person_path = os.path.join(test_dir, person)
+            images = [f for f in os.listdir(person_path) if f.endswith('.png')]
+            
+            if len(images) >= 2:
+                img1, img2 = random.sample(images, 2)
+                pair = (os.path.join(person_path, img1), os.path.join(person_path, img2), 1)
+                genuine_pairs.append(pair)
+        
+        # Generate forged pairs (different people)
+        for _ in range(num_forged):
+            person1, person2 = random.sample(people, 2)
+            person1_path = os.path.join(test_dir, person1)
+            person2_path = os.path.join(test_dir, person2)
+            
+            images1 = [f for f in os.listdir(person1_path) if f.endswith('.png')]
+            images2 = [f for f in os.listdir(person2_path) if f.endswith('.png')]
+            
+            if images1 and images2:
+                img1 = random.choice(images1)
+                img2 = random.choice(images2)
+                pair = (os.path.join(person1_path, img1), os.path.join(person2_path, img2), 0)
+                forged_pairs.append(pair)
+        
+        return genuine_pairs + forged_pairs
+    
+    def evaluate_pairs(self, test_pairs):
+        """Evaluate model on test pairs"""
+        similarities = []
+        true_labels = []
+        predicted_labels = []
+        
+        print(f"Evaluating {len(test_pairs)} pairs...")
+        
+        for i, (img1_path, img2_path, label) in enumerate(test_pairs):
+            if i % 100 == 0:
+                print(f"Progress: {i}/{len(test_pairs)}")
+            
+            try:
+                emb1 = self.get_embedding(img1_path)
+                emb2 = self.get_embedding(img2_path)
+                similarity = cosine_similarity([emb1], [emb2])[0][0]
+                
+                similarities.append(similarity)
+                true_labels.append(label)
+                predicted_labels.append(1 if similarity >= self.threshold else 0)
+                
+            except Exception as e:
+                print(f"Error processing pair {i}: {e}")
+                continue
+        
+        return np.array(similarities), np.array(true_labels), np.array(predicted_labels)
+    
+    def calculate_metrics(self, similarities, true_labels, predicted_labels):
+        """Calculate various metrics"""
+        accuracy = accuracy_score(true_labels, predicted_labels)
+        precision, recall, f1, _ = precision_recall_fscore_support(true_labels, predicted_labels, average='binary')
+        auc = roc_auc_score(true_labels, similarities)
+        
+        # Calculate EER (Equal Error Rate)
+        fpr, tpr, thresholds = roc_curve(true_labels, similarities)
+        fnr = 1 - tpr
+        eer_index = np.nanargmin(np.absolute(fnr - fpr))
+        eer = fpr[eer_index]
+        eer_threshold = thresholds[eer_index]
+        
+        return {
+            'accuracy': accuracy,
+            'precision': precision,
+            'recall': recall,
+            'f1_score': f1,
+            'auc': auc,
+            'eer': eer,
+            'eer_threshold': eer_threshold
+        }
+    
+    
+    def plot_results(self, similarities, true_labels, metrics):
+        """Plot evaluation results"""
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
+        
+        # Similarity distribution
+        genuine_sims = similarities[true_labels == 1]
+        forged_sims = similarities[true_labels == 0]
+        
+        ax1.hist(genuine_sims, bins=50, alpha=0.7, label='Genuine', color='green')
+        ax1.hist(forged_sims, bins=50, alpha=0.7, label='Forged', color='red')
+        ax1.axvline(self.threshold, color='black', linestyle='--', label=f'Threshold ({self.threshold})')
+        ax1.set_xlabel('Cosine Similarity')
+        ax1.set_ylabel('Frequency')
+        ax1.set_title('Similarity Distribution')
+        ax1.legend()
+        
+        # ROC Curve
+        fpr, tpr, _ = roc_curve(true_labels, similarities)
+        ax2.plot(fpr, tpr, label=f'ROC Curve (AUC = {metrics["auc"]:.3f})')
+        ax2.plot([0, 1], [0, 1], 'k--', label='Random')
+        ax2.set_xlabel('False Positive Rate')
+        ax2.set_ylabel('True Positive Rate')
+        ax2.set_title('ROC Curve')
+        ax2.legend()
+        
+        # Threshold vs Accuracy
+        thresholds = np.linspace(0, 1, 100)
+        accuracies = []
+        for thresh in thresholds:
+            pred = (similarities >= thresh).astype(int)
+            acc = accuracy_score(true_labels, pred)
+            accuracies.append(acc)
+        
+        ax3.plot(thresholds, accuracies)
+        ax3.axvline(self.threshold, color='red', linestyle='--', label=f'Current threshold')
+        ax3.axvline(metrics['eer_threshold'], color='green', linestyle='--', label=f'EER threshold')
+        ax3.set_xlabel('Threshold')
+        ax3.set_ylabel('Accuracy')
+        ax3.set_title('Threshold vs Accuracy')
+        ax3.legend()
+        
+        # Metrics summary
+        ax4.axis('off')
+        metrics_text = f"""
+        Metrics Summary:
+        ─────────────────
+        Accuracy: {metrics['accuracy']:.3f}
+        Precision: {metrics['precision']:.3f}
+        Recall: {metrics['recall']:.3f}
+        F1-Score: {metrics['f1_score']:.3f}
+        AUC: {metrics['auc']:.3f}
+        EER: {metrics['eer']:.3f}
+        EER Threshold: {metrics['eer_threshold']:.3f}
+        
+        Current Threshold: {self.threshold}
+        """
+        ax4.text(0.1, 0.5, metrics_text, fontsize=12, fontfamily='monospace')
+        
+        plt.tight_layout()
+        plt.show()
+    
+    def test_triplet_accuracy(self, val_triplets_path="val_triplets.txt"):
+        """Test accuracy on triplet validation data"""
+        with open(val_triplets_path, 'r') as f:
+            triplets = [line.strip().split(',') for line in f.readlines()]
+        
+        correct_predictions = 0
+        total_triplets = len(triplets)
+        
+        print(f"Testing {total_triplets} triplets...")
+        
+        for i, (anchor_path, positive_path, negative_path) in enumerate(triplets):
+            if i % 100 == 0:
+                print(f"Progress: {i}/{total_triplets}")
+            
+            try:
+                anchor_emb = self.get_embedding(anchor_path)
+                positive_emb = self.get_embedding(positive_path)
+                negative_emb = self.get_embedding(negative_path)
+                
+                pos_sim = cosine_similarity([anchor_emb], [positive_emb])[0][0]
+                neg_sim = cosine_similarity([anchor_emb], [negative_emb])[0][0]
+                
+                if pos_sim > neg_sim:
+                    correct_predictions += 1
+                    
+            except Exception as e:
+                print(f"Error processing triplet {i}: {e}")
+                continue
+        
+        triplet_accuracy = correct_predictions / total_triplets
+        print(f"Triplet Accuracy: {triplet_accuracy:.3f}")
+        return triplet_accuracy
+
+
+def main():
+    # Initialize tester
+    tester = SignatureAccuracyTester(model_path="models/margin5_alllayers.h5", threshold=0.92)
+    
+    # Test on triplets data
+    print("=== Triplet Accuracy Test ===")
+    triplet_acc = tester.test_triplet_accuracy("test_triplets.txt")
+    
+    # Test on pair-wise verification
+    print("\n=== Pair-wise Verification Test ===")
+    test_pairs = tester.create_test_pairs("dataset/test", num_genuine=500, num_forged=500)
+    similarities, true_labels, predicted_labels = tester.evaluate_pairs(test_pairs)
+    
+    # Calculate metrics
+    metrics = tester.calculate_metrics(similarities, true_labels, predicted_labels)
+    
+    # Print results
+    print("\n=== Results ===")
+    print(f"Triplet Accuracy: {triplet_acc:.3f}")
+    for metric, value in metrics.items():
+        print(f"{metric.capitalize()}: {value:.3f}")
+    
+    # Plot results
+    tester.plot_results(similarities, true_labels, metrics)
+    
+    # Test different thresholds
+    print("\n=== Threshold Analysis ===")
+    best_threshold = metrics['eer_threshold']
+    tester.threshold = best_threshold
+    _, _, pred_best = tester.evaluate_pairs(test_pairs)
+    best_accuracy = accuracy_score(true_labels, pred_best)
+    print(f"Best threshold (EER): {best_threshold:.3f}")
+    print(f"Accuracy at best threshold: {best_accuracy:.3f}")
+
+
+if __name__ == "__main__":
+    main()

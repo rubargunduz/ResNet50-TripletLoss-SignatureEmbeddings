@@ -37,7 +37,7 @@ def make_triplets(data_dir, num_triplets=10000, seed=42):
     return triplets
 
 
-triplets = make_triplets("dataset/train", num_triplets=10000, seed=42)
-with open("triplets.txt", "w") as f:
+triplets = make_triplets("dataset/test", num_triplets=500, seed=42)
+with open("test_triplets.txt", "w") as f:
     for a, p, n in triplets:
         f.write(f"{a},{p},{n}\n")

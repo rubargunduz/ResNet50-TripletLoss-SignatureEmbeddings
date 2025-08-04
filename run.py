@@ -8,7 +8,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from preprocessing import preprocess_signature
 
 # Load the trained embedding model
-embedding_model = load_model("margin5_fully.h5")
+embedding_model = load_model("models/margin5_alllayers.h5")
 
 def select_image(title="Select an image"):
     root = tk.Tk()
@@ -59,7 +59,12 @@ def main():
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     plt.show()
 
+def match(img1_path, img2_path):
+    emb1, proc1 = get_embedding(img1_path)
+    emb2, proc2 = get_embedding(img2_path)
+    similarity = cosine_similarity([emb1], [emb2])[0][0]
 
+    return similarity    * 100
 
 if __name__ == "__main__":
     main()

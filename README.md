@@ -15,6 +15,7 @@ The goal here can be:
 - Cosine similarity is used to compare embeddings.
 <img width="400" height="400" alt="Figure_1" src="https://github.com/user-attachments/assets/791fdcae-c397-4c92-8b6d-611db093b0f8" />
 <img width="400" height="400" alt="Figure_2" src="https://github.com/user-attachments/assets/94edbe9e-599c-43e1-81c2-a2a423d66e64" />
+<img width="800" height="432" alt="threshold-092-margin5" src="https://github.com/user-attachments/assets/2be2a6e7-ee79-4427-8ce7-63b69dd0aafc" />
 
 ## Dataset
 
